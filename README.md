@@ -1,4 +1,4 @@
-# Provision and Configure Azure Function App with Key Vault References
+# Provision and Configure Azure Function App with Key Vault References using ARM Template
 
 **Important: for detailed information, please use https://docs.microsoft.com/en-us/azure/app-service/app-service-key-vault-references**
 
