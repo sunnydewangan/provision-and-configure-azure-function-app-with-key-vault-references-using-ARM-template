@@ -1,0 +1,200 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the function app that you wish to create."
+      }
+    },
+    "sku": {
+      "type": "string",
+      "allowedValues": [
+        "D1",
+        "F1",
+        "B1",
+        "B2",
+        "B3",
+        "S1",
+        "S2",
+        "S3",
+        "P1",
+        "P2",
+        "P3",
+        "P1V2",
+        "P2V2",
+        "P3V2",
+        "I1",
+        "I2",
+        "I3",
+        "Y1"
+      ],
+      "metadata": {
+        "description": "The pricing tier for the hosting plan."
+      }
+    },
+    "workerSize": {
+      "type": "string",
+      "allowedValues": [
+        "0",
+        "1",
+        "2"
+      ],
+      "metadata": {
+        "description": "The instance size of the hosting plan (small, medium, or large)."
+      }
+    },
+    "storageAccountType": {
+      "type": "string",
+      "allowedValues": [
+        "Standard_LRS",
+        "Standard_GRS",
+        "Standard_RAGRS"
+      ],
+      "metadata": {
+        "description": "Storage Account type"
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Location for all resources."
+      }
+    },
+    "keyVaultName": {
+      "type": "string",
+      "metadata": {
+        "description": "Name of the KeyVault."
+      }
+    }
+  },
+  "variables": {
+    "functionAppName": "[parameters('appName')]",
+    "hostingPlanName": "[parameters('appName')]",
+    "storageAccountName": "[concat(uniquestring(resourceGroup().id), 'functions')]",
+    "keyVaultName": "[parameters('keyVaultName')]",
+    "keyVaultSecretId": "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'testSecret')]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('storageAccountName')]",
+      "apiVersion": "2018-11-01",
+      "location": "[parameters('location')]",
+      "kind": "Storage",
+      "sku": {
+        "name": "[parameters('storageAccountType')]"
+      }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2019-08-01",
+      "name": "[variables('hostingPlanName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "Name": "[parameters('sku')]"
+      },
+      "properties": {
+        "name": "[variables('hostingPlanName')]",
+
+        "workerSize": "[parameters('workerSize')]",
+        "numberOfWorkers": 1
+      }
+    },
+    {
+      "apiVersion": "2018-11-01",
+      "type": "Microsoft.Web/sites",
+      "name": "[variables('functionAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ],
+      "properties": {
+        "name": "[variables('functionAppName')]",
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "clientAffinityEnabled": false,
+        "siteConfig": {
+          "alwaysOn": true
+        }
+      },
+      "resources": [
+        {
+          "apiVersion": "2019-08-01",
+          "name": "appsettings",
+          "type": "config",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+            "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+            "[resourceId('Microsoft.KeyVault/vaults/', variables('keyVaultName'))]",
+            "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'testSecret')]"
+          ],
+          "properties": {
+            "AzureWebJobsStorage": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storageAccountName'),';AccountKey=',listkeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2015-05-01-preview').key1,';')]",
+            "AzureWebJobsDashboard": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storageAccountName'),';AccountKey=',listkeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2015-05-01-preview').key1,';')]",
+            "FUNCTIONS_EXTENSION_VERSION": "~2",
+            "WEBSITE_ENABLE_SYNC_UPDATE_SITE": "true", //applicable when you configure a source control
+            "SecretUri": "[concat('@Microsoft.KeyVault(SecretUri=', reference(variables('keyVaultSecretId'), '2015-06-01').secretUriWithVersion, ')')]"
+          }
+        }
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "name": "[variables('keyVaultName')]",
+      "apiVersion": "2018-02-14",
+      "location": "[parameters('location')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]"
+      ],
+      "properties": {
+        "enabledForDeployment": true,
+        "enabledForTemplateDeployment": true,
+        "tenantId": "[subscription().tenantId]",
+        "sku": {
+          "name": "standard",
+          "family": "A"
+        },
+        "accessPolicies": [
+          {
+            "tenantId": "[subscription().tenantId]",
+            "objectId": "[reference(concat(resourceId('Microsoft.Web/sites', variables('functionAppName')), '/providers/Microsoft.ManagedIdentity/Identities/default'), '2018-11-30').principalId]",
+            "permissions": {
+              "keys": [
+                "get",
+                "list"
+              ],
+              "secrets": [
+                "get",
+                "list"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/secrets",
+      "name": "[concat(variables('keyVaultName'), '/', 'testSecret')]",
+      "apiVersion": "2019-09-01",
+      "dependsOn": [
+        "[concat('Microsoft.KeyVault/vaults/', variables('keyVaultName'))]"
+      ],
+      "properties": {
+        "value": "GUID"
+      }
+    }
+  ],
+  "outputs": {
+    "keyVaultURL": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'testSecret'),'2015-06-01').secretUriWithVersion]"
+    }
+  }
+}
